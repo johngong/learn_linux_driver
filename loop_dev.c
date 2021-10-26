@@ -5,17 +5,17 @@
 #include <linux/falloc.h>
 #include <linux/kobj_map.h>
 #include <linux/kthread.h>
+#include <linux/blk-mq.h>
 #include "loop_dev.h"
 
 static DEFINE_MUTEX(loop_index_mutex);
-static struct lo_dev *g_lo = NULL;
+static struct lo_dev *lo = NULL;
 
 
 static int loop_set_fd(struct lo_dev *lo, struct block_device *bd,
 		fmode_t mode, unsigned long arg)
 {
-	
-
+	return 0;
 }
 
 
@@ -26,10 +26,12 @@ static int lo_ioctl(struct block_device *bd, fmode_t mode,
 	int err;
 
 	switch (cmd) {
-	case LOOP_SET_FD:
+	case 0:
+	//case LOOP_SET_FD:
 		err = loop_set_fd(lo, bd, mode, arg);
 		break;
-	case LOOP_SET_CAPACITY:
+	case 1:
+	//case LOOP_SET_CAPACITY:
 		err = -EPERM;
 		break;
 	default:
@@ -42,7 +44,7 @@ static int lo_ioctl(struct block_device *bd, fmode_t mode,
 static void lo_release(struct gendisk *gd, fmode_t mode)
 {
 	struct lo_dev *lo = gd->private_data;
-	if (atomic_dec_return(lo->lo_refcnt))
+	if (atomic_dec_return(&lo->lo_refcnt))
 		return;
 }
 
@@ -71,7 +73,7 @@ static const struct block_device_operations lo_fops = {
 	.ioctl	=	lo_ioctl,
 };
 
-static int lo_queue_rq(struct blk_mq_hw_ctx *hctx,
+static blk_status_t lo_queue_rq(struct blk_mq_hw_ctx *hctx,
 		const struct blk_mq_queue_data *bd)
 {
 	struct lo_cmd *cmd = blk_mq_rq_to_pdu(bd->rq);
@@ -79,7 +81,8 @@ static int lo_queue_rq(struct blk_mq_hw_ctx *hctx,
 	blk_mq_start_request(bd->rq);
 
 	kthread_queue_work(&lo->worker, &cmd->work);
-	return BLK_MQ_RQ_QUEUE_OK;
+	return 0;
+	//return BLK_MQ_RQ_QUEUE_OK;
 }
 
 static int lo_read_simple(struct lo_dev *lo, struct request *rq,
@@ -92,7 +95,7 @@ static int lo_read_simple(struct lo_dev *lo, struct request *rq,
 
         rq_for_each_segment(bvec, rq, iter) {
                 iov_iter_bvec(&i, ITER_BVEC, &bvec, 1, bvec.bv_len);
-                len = vfs_iter_read(lo->lo_backing_file, &i, &pos);
+                len = vfs_iter_read(lo->lo_backing_file, &i, &pos, 0);
                 if (len < 0)
                         return len;
 
@@ -119,7 +122,7 @@ static int lo_write_bvec(struct file *file, struct bio_vec *bvec, loff_t *ppos)
         iov_iter_bvec(&i, ITER_BVEC, bvec, 1, bvec->bv_len);
 
         file_start_write(file);
-        bw = vfs_iter_write(file, &i, ppos);
+        bw = vfs_iter_write(file, &i, ppos, 0);
         file_end_write(file);
 
         if (likely(bw ==  bvec->bv_len))
@@ -207,7 +210,7 @@ static void loop_handle_cmd(struct lo_cmd *cmd)
 	ret = do_req_filebacked(lo, cmd->rq);
 
 	if (ret)
-		blk_mq_complete_request(cmd->rq, ret ? -EIO : 0);
+		blk_mq_complete_request(cmd->rq);
 }
 
 static void loop_queue_work(struct kthread_work *work)
@@ -217,9 +220,8 @@ static void loop_queue_work(struct kthread_work *work)
 	loop_handle_cmd(cmd);
 }
 
-static int lo_init_request(void *data, struct request *rq,
-		unsigned int hctx_idx, unsigned int request_idx, 
-		unsigned int numa_node)
+static int lo_init_request(struct blk_mq_tag_set *set, struct request *rq,
+		unsigned int hctx_idx, unsigned int request_idx)
 {
 	struct lo_cmd *cmd = blk_mq_rq_to_pdu(rq);
 
@@ -248,7 +250,7 @@ static int add_loop_dev(struct lo_dev **ld)
 	l->tag_set.queue_depth = 128;
 	l->tag_set.numa_node = NUMA_NO_NODE;
 	l->tag_set.cmd_size = sizeof(struct lo_cmd);
-	l->tag_set.flags = BLK_MQ_F_SHOULD_MERGE | BLK_MQ_F_SG_MERGE;
+	l->tag_set.flags = BLK_MQ_F_SHOULD_MERGE | BLK_MQ_F_NO_SCHED;
 	l->tag_set.driver_data = l;
 
 	err = blk_mq_alloc_tag_set(&l->tag_set);
@@ -274,8 +276,8 @@ static int add_loop_dev(struct lo_dev **ld)
 
 static int loop_lookup(struct lo_dev **l)
 {
-	if (g_lo) {
-		*l = g_lo;
+	if (lo) {
+		*l = lo;
 		return 0;
 	} else {
 		*l = NULL;
@@ -296,7 +298,7 @@ static struct kobject *loop_probe(dev_t dev, int *part, void *data)
         if (err < 0)
                 kobj = NULL;
         else
-                kobj = get_disk(lo->gd);
+                kobj = get_disk_and_module(lo->gd);
         mutex_unlock(&loop_index_mutex);
 
         *part = 0;
@@ -307,7 +309,7 @@ static int __init loop_init(void)
 {
 	struct lo_dev *ld;
 
-	register_blkdev(LOOP_MAJOR, "jgloop");
+	register_blkdev(LOOP_MAJOR, "loop_dev");
 
 	blk_register_region(MKDEV(LOOP_MAJOR, 0), (1UL),
                                   THIS_MODULE, loop_probe, NULL, NULL);
@@ -329,9 +331,9 @@ static void del_loop_dev(struct lo_dev *lo)
 
 static void __exit loop_exit(void)
 {
-	del_loop_dev(g_lo);
+	del_loop_dev(lo);
 	blk_unregister_region(MKDEV(LOOP_MAJOR, 0), 1UL);
-	unregister_blkdev(LOOP_MAJOR, "jgloop");
+	unregister_blkdev(LOOP_MAJOR, "loop_dev");
 }
 
 module_init(loop_init);
