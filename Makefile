@@ -3,7 +3,7 @@ KDIR := /lib/modules/$(KVER)/build
 
 obj-m = loop_dev.o
 all:
-	$(MAKE) -C $(KDIR) SUBDIRS=$(shell pwd) BUILD_INIT=m
+	$(MAKE) -C $(KDIR) M=$(shell pwd) BUILD_INIT=m
 
 clean:
 	rm -f *.o *.ko .*.cmd *.mod.c .*.d .depend *~ Modules.symvers \
