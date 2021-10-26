@@ -5,7 +5,7 @@
 #include <linux/falloc.h>
 #include <linux/kobj_map.h>
 #include <linux/kthread.h>
-#include "lo_jg.h"
+#include "loop_dev.h"
 
 static DEFINE_MUTEX(loop_index_mutex);
 static struct lo_dev *g_lo = NULL;
