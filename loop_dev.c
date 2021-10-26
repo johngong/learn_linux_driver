@@ -67,10 +67,10 @@ out:
 }
 
 static const struct block_device_operations lo_fops = {
-	.owner	=	THIS_MODULE,
-	.open	=	lo_open,
+	.owner		=	THIS_MODULE,
+	.open		=	lo_open,
 	.release	=	lo_release,
-	.ioctl	=	lo_ioctl,
+	.ioctl		=	lo_ioctl,
 };
 
 static blk_status_t lo_queue_rq(struct blk_mq_hw_ctx *hctx,
@@ -309,9 +309,9 @@ static int __init loop_init(void)
 {
 	struct lo_dev *ld;
 
-	register_blkdev(LOOP_MAJOR, "loop_dev");
+	register_blkdev(MMC_BLOCK_MAJOR, "loop_dev");
 
-	blk_register_region(MKDEV(LOOP_MAJOR, 0), (1UL),
+	blk_register_region(MKDEV(MMC_BLOCK_MAJOR, 0), (1UL),
                                   THIS_MODULE, loop_probe, NULL, NULL);
 
 	add_loop_dev(&ld);
@@ -332,8 +332,8 @@ static void del_loop_dev(struct lo_dev *lo)
 static void __exit loop_exit(void)
 {
 	del_loop_dev(lo);
-	blk_unregister_region(MKDEV(LOOP_MAJOR, 0), 1UL);
-	unregister_blkdev(LOOP_MAJOR, "loop_dev");
+	blk_unregister_region(MKDEV(MMC_BLOCK_MAJOR, 0), 1UL);
+	unregister_blkdev(MMC_BLOCK_MAJOR, "loop_dev");
 }
 
 module_init(loop_init);
